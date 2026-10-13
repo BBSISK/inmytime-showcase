@@ -109,9 +109,43 @@ flowchart LR
 | Storage | PostgreSQL on Neon (SQLite in development; progress and metadata only), Cloudflare R2, Google Drive API |
 | Security | WebCrypto client-side encryption (ECDH P-256, AES-GCM), per-interviewee keys, server-side access control, OAuth |
 | Payments | Stripe, with deferred aggregated billing for question packs |
-| Internationalisation | Flask-Babel, with a full German translation (~966 strings) and French and Spanish catalogs in place |
+| Internationalisation | Flask-Babel, with a full German translation (~966 strings at first release); French and Spanish catalogs scaffolded for later |
 | Infrastructure | Render (moved from PythonAnywhere), Cloudflare DNS, Let's Encrypt, GitHub |
 | Testing | Automated API test suites and end-to-end Playwright browser tests (real encryption, recording and playback) |
+
+## Technical highlights
+
+### A zero-knowledge design, end to end
+
+- **Per-device keys.** Each paired device generates an ECDH P-256 keypair in the browser; the private key never leaves it.
+- **Per-interviewee stream keys.** Every interviewee has a random AES-GCM key, wrapped separately for each device allowed to see them. The server stores wraps it cannot open.
+- **Everything sensitive is encrypted before upload:** audio, video, photographs, names and notes. The server holds ciphertext, IVs and storage pointers, never keys or plaintext.
+- **Recovery that actually recovers.** I found in the design phase that the obvious "recovery email + PIN" flow could restore *access* but not *content*, since stream keys were wrapped only for the lost device. The fix is a second, parallel wrap derived from the recovery PIN, so losing a phone doesn't mean losing the archive.
+- **Honest metadata boundaries.** The few things the server must see to do its job (which question was answered, when, file sizes) are documented explicitly rather than glossed over.
+- **Different threat models for different modules.** CircleofFriends reuses the same zero-knowledge machinery; NationalTapestry deliberately does not, because everything in it is written to be read by other certified users, so it uses plain access control and moderation instead of encryption.
+
+### Architecture and engineering
+
+- **Modular monolith.** One Flask app with a blueprint pair per product (page routes plus a JSON API), each with its own schema module and no cross-module foreign keys, so a product can be reasoned about, or split out, on its own.
+- **Dual database layer.** SQLite in development and PostgreSQL in production through a small adapter that translates placeholders and wraps connections, with connection pooling, so the same SQL runs in both.
+- **Media never touches the app server.** Browsers upload ciphertext straight to object storage (Cloudflare R2 or the family's own Google Drive, with resumable uploads) using short-lived presigned URLs.
+- **Standards-based Web Push.** Gentle weekly nudges and spoken prompts use Web Push with server-side payload encryption (RFC 8291) and VAPID authentication (RFC 8292).
+- **Offline-first recording.** Service workers and an offline queue keep a recording safe through a dropped connection, and the app installs as a PWA.
+- **Curated content as code.** Question packs, LifeLine periods and regional milestones are versioned Python constants rather than database rows, so content changes ship with a deploy and are reviewable in a diff.
+- **Billing designed for small amounts.** Question packs unlock instantly and charge later: purchases accumulate and a weekly sweep bills them through Stripe once a minimum threshold is reached, avoiding a stream of tiny card charges.
+- **Opt-in AI features.** Optional transcription and memoir-chapter synthesis can use OpenAI or Gemini, and only when the family chooses it.
+- **Scheduled jobs as separate processes:** weekly prompts, the billing sweep, and daily and six-hourly activity digests, monitored through Render's failure alerts.
+- **Observability.** Sentry error tracking, health endpoints, and an admin activity dashboard that shows counts and progress, never content.
+
+### Process and documentation
+
+- **Design before code.** Each product has a written design document (the StoryCatcher one runs to roughly 3,000 lines) covering the data model, API surface, key distribution, open questions and trade-offs, plus a shared-architecture note that keeps sibling products consistent.
+- **A beta issue log.** Every real problem reported by beta families is recorded with its root cause, fix and lessons learned (14 entries so far).
+- **Internationalisation at the foundation**, with a written playbook for adding a language.
+
+### The project by the numbers
+
+Built solo, from the first commit on 31 July 2026: around 340 commits, roughly 22,000 lines of Python, 57 page templates, 200+ routes across four schema modules, and dozens of database tables.
 
 ## Problems I solved along the way
 
